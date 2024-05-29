@@ -7,7 +7,7 @@ import asyncio
 import argparse
 
 BASE_URL ='https://api.privatbank.ua/p24api/exchange_rates?json&date='
-# url = 'https://660951750f324a9a28831e25.mockapi.io/test/exchange_rates?'
+# BASE_URL = 'https://660951750f324a9a28831e25.mockapi.io/test/exchange_rates?'
 def create_url_list_for_requests(num: int)-> list:
     dates = last_few_days(num)
     return list(map(lambda x: BASE_URL+x,dates))
@@ -20,28 +20,34 @@ def last_few_days(number_of_days: int)-> list:
         date_list.append(datetime.strftime(today - timedelta(days=day),'%d.%m.%Y'))
     return date_list
 
-async def pars_json(js: str, args)-> list:
-    dt = js['date']
-    exc = js['exchangeRate']
-    type_cur = {}
-    for el in range(len(exc)):
-        try:
-            if not args or exc[el]['currency'] in args:
-                val = {exc[el]['currency']:{'sale': exc[el]['saleRate'], 'purchase': exc[el]['purchaseRate']}}
-                type_cur.update(val)
-        except Exception as keyerr:
-            print(f'In response field {keyerr} not found')
-    cur = {dt:type_cur}
-    return cur
+
+async def parse_exchange_rate(data, currencies=None):
+    date = data['date']
+    rates = {rate['currency']: rate for rate in data['exchangeRate']}
+    result = {}
+    if currencies:
+        for currency in currencies:
+            if currency in rates:
+                result[currency] = {
+                    'sale': rates[currency].get('saleRateNB', rates[currency].get('saleRate')),
+                    'purchase': rates[currency].get('purchaseRateNB', rates[currency].get('purchaseRate'))
+                }
+    else:
+        for currency, rate in rates.items():
+            result[currency] = {
+                'sale': rate.get('saleRateNB', rate.get('saleRate')),
+                'purchase': rate.get('purchaseRateNB', rate.get('purchaseRate'))
+            }
+    return {date: result}
 
 
-async def exch_request(url:str,val, session: aiohttp.ClientSession):
+async def get_exchange_rates(url:str,val, session: aiohttp.ClientSession):
     async with session.get(url) as resp:
         print(f'Starting {url}')
         try:
             if resp.status == 200:
                 r = await resp.json()
-                return await pars_json(r, val )
+                return await parse_exchange_rate(r, val )
             else:
                 print(f"Error status: {resp.status} for {url}")
         except aiohttp.ClientConnectorError as err:
@@ -52,7 +58,7 @@ async def main(num, val):
     async with aiohttp.ClientSession() as session:
         storage_data = []
         urls = create_url_list_for_requests(num)
-        futures = [asyncio.create_task(exch_request(url_,val, session)) for url_ in urls]
+        futures = [asyncio.create_task(get_exchange_rates(url_,val, session)) for url_ in urls]
         storage_data = await asyncio.gather(*futures)
         print(storage_data)
 
